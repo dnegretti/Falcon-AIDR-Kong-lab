@@ -1,0 +1,63 @@
+_format_version: "3.0"
+
+services:
+  - name: anthropic-service
+    # URL placeholder requerido por la estructura del service.
+    # El plugin ai-proxy redirige automaticamente al endpoint real de Anthropic.
+    url: http://localhost:32000
+    routes:
+      - name: chat-route
+        paths:
+          - /chat
+    plugins:
+      # --- 1) AI Proxy: traduce el request a formato Anthropic y enruta ---
+      - name: ai-proxy
+        config:
+          route_type: llm/v1/chat
+          auth:
+            # Anthropic usa el header x-api-key (no "Authorization: Bearer")
+            header_name: x-api-key
+            header_value: "__ANTHROPIC_API_KEY__"
+          model:
+            provider: anthropic
+            name: claude-sonnet-4-6
+            options:
+              anthropic_version: "2023-06-01"
+              max_tokens: 1024
+              temperature: 1.0
+
+      # --- 2) AIDR request: inspecciona lo que ENTRA (input rules) ---
+      - name: crowdstrike-aidr-request
+        config:
+          # La key se lee del vault env (variable CS_AIDR_TOKEN en el contenedor)
+          ai_guard_api_key: "{vault://env-cs-aidr/token}"
+          # Ajusta la base URL segun tu region (ej. US-2: https://api.us-2.crowdstrike.com/aidr/aiguard)
+          ai_guard_api_base_url: "__CS_AIDR_BASE_URL__"
+          upstream_llm:
+            # "kong" => rutea a traves del AI Proxy en lugar de un provider directo
+            provider: "kong"
+            api_uri: "/llm/v1/chat"
+          # Metadatos opcionales para identificar este trafico en AIDR
+          llm_provider: "anthropic"
+          model: "claude-sonnet-4-6"
+          app_id: "demo-anthropic-app"
+
+      # --- 3) AIDR response: inspecciona lo que SALE (output rules) ---
+      - name: crowdstrike-aidr-response
+        config:
+          ai_guard_api_key: "{vault://env-cs-aidr/token}"
+          ai_guard_api_base_url: "__CS_AIDR_BASE_URL__"
+          upstream_llm:
+            provider: "kong"
+            api_uri: "/llm/v1/chat"
+          llm_provider: "anthropic"
+          model: "claude-sonnet-4-6"
+          app_id: "demo-anthropic-app"
+
+# Vault de tipo env: lee secretos de variables de entorno con prefijo CS_AIDR_
+# Asi, {vault://env-cs-aidr/token} resuelve a la variable CS_AIDR_TOKEN.
+vaults:
+  - name: env
+    prefix: env-cs-aidr
+    config:
+      prefix: "CS_AIDR_"
